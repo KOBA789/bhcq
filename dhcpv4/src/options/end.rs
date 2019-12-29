@@ -1,5 +1,5 @@
 use super::super::option::Code;
-use super::{Builder, OptionMap};
+use super::Builder;
 
 pub trait AddEndExt {
     fn add_end(&mut self);
