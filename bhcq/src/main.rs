@@ -5,7 +5,7 @@ use std::os::unix::io::FromRawFd;
 use std::net;
 use std::error::Error as StdError;
 use std::iter::FromIterator;
-use std::collections::{HashMap, hash_map::RandomState};
+use std::collections::BTreeMap;
 use tokio::net::UdpSocket;
 use tokio::prelude::*;
 use dhcpv4::{self, message, Message, OpCode};
@@ -15,6 +15,9 @@ use dhcpv4::options::{
     routers::*,
     lease_time::*,
     domain_name_servers::*,
+    requested_ip_address::*,
+    server_identifier::*,
+    end::*,
 };
 
 #[tokio::main]
@@ -57,10 +60,10 @@ async fn do_loop(mut sock: UdpSocket) -> Result<(), Box<dyn StdError>> {
         let bytes = &buf[0..read];
         let m = Message::new(bytes).ok_or("malformed size packet")?;
         let requ_hdr = m.header();
-        let options = m.options();
-        let options_iter = options.try_iter().ok_or("malformed magic cookie")?;
-        let options_map = HashMap::<_, _, RandomState>::from_iter(options_iter.filter_map(Into::into));
-        let message_type = options_map.get_message_type().ok_or("no message type")?;
+        let opts = m.options();
+        let opts_iter = opts.try_iter().ok_or("malformed magic cookie")?;
+        let opts_map = BTreeMap::from_iter(opts_iter.filter_map(Into::into));
+        let message_type = opts_map.get_message_type().ok_or("no message type")?;
         println!("{:?}", message_type);
         match message_type {
             MessageType::DHCPDISCOVER => {
@@ -82,43 +85,69 @@ async fn do_loop(mut sock: UdpSocket) -> Result<(), Box<dyn StdError>> {
                     opts_bldr.add_subnet_mask(net::Ipv4Addr::new(255, 255, 255, 0));
                     opts_bldr.add_routers(&[net::Ipv4Addr::new(192, 168, 44, 1)]);
                     opts_bldr.add_lease_time(30);
+                    opts_bldr.add_server_identifier(net::Ipv4Addr::new(192, 168, 44, 1));
                     opts_bldr.add_domain_name_servers(&[
                         net::Ipv4Addr::new(8, 8, 8, 8),
                         net::Ipv4Addr::new(8, 8, 4, 4),
                     ]);
+                    opts_bldr.add_end();
                 }
                 let packet = bldr.finish();
-                println!("{:02x?}", packet);
                 sock.send_to(packet, bcast_sock_addr).await?;
                 println!("<= OFFER");
             },
             MessageType::DHCPREQUEST => {
                 println!("=> REQUEST");
+                //println!("{:?}", opts_map);
+                let req_ip = match opts_map.get_requested_ip_address() {
+                    Some(req_ip) => req_ip,
+                    None => requ_hdr.ciaddr(),
+                };
                 let mut bldr = message::Builder::new();
-                {
-                    let mut repl_hdr = bldr.header_mut();
-                    repl_hdr.set_op_code(OpCode::BOOTREPLY);
-                    repl_hdr.set_xid(requ_hdr.xid());
-                    repl_hdr.set_flags(requ_hdr.flags());
-                    repl_hdr.set_ciaddr(requ_hdr.ciaddr());
-                    repl_hdr.set_yiaddr(net::Ipv4Addr::new(192, 168, 44, 2));
-                    repl_hdr.set_giaddr(requ_hdr.giaddr());
-                    repl_hdr.chaddr().copy_from_slice(requ_hdr.chaddr());
-                }
-                {
-                    let mut opts_bldr = bldr.options_builder();
-                    opts_bldr.add_magic_cookie();
-                    opts_bldr.add_message_type(MessageType::DHCPACK);
-                    opts_bldr.add_subnet_mask(net::Ipv4Addr::new(255, 255, 255, 0));
-                    opts_bldr.add_routers(&[net::Ipv4Addr::new(192, 168, 44, 1)]);
-                    opts_bldr.add_lease_time(30);
-                    opts_bldr.add_domain_name_servers(&[
-                        net::Ipv4Addr::new(8, 8, 8, 8),
-                        net::Ipv4Addr::new(8, 8, 4, 4),
-                    ]);
+                if req_ip == net::Ipv4Addr::new(192, 168, 44, 2) {
+                    {
+                        let mut repl_hdr = bldr.header_mut();
+                        repl_hdr.set_op_code(OpCode::BOOTREPLY);
+                        repl_hdr.set_xid(requ_hdr.xid());
+                        repl_hdr.set_flags(requ_hdr.flags());
+                        repl_hdr.set_ciaddr(requ_hdr.ciaddr());
+                        repl_hdr.set_yiaddr(net::Ipv4Addr::new(192, 168, 44, 2));
+                        repl_hdr.set_giaddr(requ_hdr.giaddr());
+                        repl_hdr.chaddr().copy_from_slice(requ_hdr.chaddr());
+                    }
+                    {
+                        let mut opts_bldr = bldr.options_builder();
+                        opts_bldr.add_magic_cookie();
+                        opts_bldr.add_message_type(MessageType::DHCPACK);
+                        opts_bldr.add_subnet_mask(net::Ipv4Addr::new(255, 255, 255, 0));
+                        opts_bldr.add_routers(&[net::Ipv4Addr::new(192, 168, 44, 1)]);
+                        opts_bldr.add_lease_time(30);
+                        opts_bldr.add_server_identifier(net::Ipv4Addr::new(192, 168, 44, 1));
+                        opts_bldr.add_domain_name_servers(&[
+                            net::Ipv4Addr::new(8, 8, 8, 8),
+                            net::Ipv4Addr::new(8, 8, 4, 4),
+                        ]);
+                        opts_bldr.add_end();
+                    }
+                } else {
+                    {
+                        let mut repl_hdr = bldr.header_mut();
+                        repl_hdr.set_op_code(OpCode::BOOTREPLY);
+                        repl_hdr.set_xid(requ_hdr.xid());
+                        repl_hdr.set_flags(requ_hdr.flags());
+                        repl_hdr.set_giaddr(requ_hdr.giaddr());
+                        repl_hdr.chaddr().copy_from_slice(requ_hdr.chaddr());
+                    }
+                    {
+                        let mut opts_bldr = bldr.options_builder();
+                        opts_bldr.add_magic_cookie();
+                        opts_bldr.add_message_type(MessageType::DHCPNAK);
+                        opts_bldr.add_server_identifier(net::Ipv4Addr::new(192, 168, 44, 1));
+                        opts_bldr.add_end();
+                    }
                 }
                 let packet = bldr.finish();
-                println!("{:02x?}", packet);
+                //println!("{:02x?}", packet);
                 sock.send_to(packet, bcast_sock_addr).await?;
                 println!("<= ACK");
             },

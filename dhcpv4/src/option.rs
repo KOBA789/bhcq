@@ -3,6 +3,7 @@ use std::option::Option as StdOption;
 pub mod code;
 pub use code::Code;
 
+#[derive(Debug)]
 pub struct Option<B>(B);
 
 impl<'a> Option<&'a [u8]>
@@ -43,6 +44,7 @@ impl<'a> Option<&'a [u8]>
     }
 }
 
+#[derive(Debug)]
 pub struct Value<B>(B);
 
 impl<'a> Value<&'a [u8]> {

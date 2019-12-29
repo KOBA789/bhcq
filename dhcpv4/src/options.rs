@@ -14,8 +14,11 @@ pub mod domain_name_servers;
 pub mod bytes;
 pub mod domain_name;
 pub mod host_name;
-pub mod message_type;
+pub mod requested_ip_address;
 pub mod lease_time;
+pub mod message_type;
+pub mod server_identifier;
+pub mod end;
 
 pub struct Options<B>(B);
 
