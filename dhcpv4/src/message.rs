@@ -178,7 +178,7 @@ impl<'a> Header<&'a mut [u8]> {
 
     #[inline]
     pub fn set_htype(&mut self, htype: u8) {
-        self.as_mut_slice()[0] = htype;
+        self.as_mut_slice()[1] = htype;
     }
 
     #[inline]
